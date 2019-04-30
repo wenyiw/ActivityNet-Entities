@@ -9,6 +9,11 @@
 
 import json
 import argparse
+import sys, os
+
+os.system('pip install https://download.pytorch.org/whl/cpu/torch-1.0.1.post2-cp27-cp27mu-linux_x86_64.whl')
+os.system('pip install stanfordcorenlp')
+
 import torch
 import itertools
 import numpy as np
@@ -16,8 +21,6 @@ from collections import defaultdict
 from utils import bbox_overlaps_batch, get_frm_mask
 
 from stanfordcorenlp import StanfordCoreNLP
-from tqdm import tqdm
-
 
 class ANetGrdEval(object):
 
@@ -52,7 +55,6 @@ class ANetGrdEval(object):
 
 
     def import_sub(self, submission_file=None):
-
         with open(submission_file) as f:
             pred = json.load(f)['results']
         self.pred = pred
@@ -62,7 +64,6 @@ class ANetGrdEval(object):
 
         ref = self.ref
         pred = self.pred
-        print('Number of videos in the reference: {}, number of videos in the submission: {}'.format(len(ref), len(pred)))
 
         results = defaultdict(list)
         for vid, anns in ref.items():
@@ -97,42 +98,26 @@ class ANetGrdEval(object):
                             ref_bbox[:, :5].unsqueeze(0), frm_mask.unsqueeze(0))
                         results[class_name].append(1 if torch.max(overlap) > self.iou_thresh else 0)
 
-        print('Number of groundable objects in this split: {}'.format(len(results)))
         grd_accu = np.mean([sum(hm)*1./len(hm) for i,hm in results.items()])
-
-        print('-' * 80)
-        print('The overall localization accuracy is {:.4f}'.format(grd_accu))
-        print('-' * 80)
-        if self.verbose:
-            print('Object frequency and grounding accuracy per class (descending by object frequency):')
-            accu_per_clss = {(i, sum(hm)*1./len(hm)):len(hm) for i,hm in results.items()}
-            accu_per_clss = sorted(accu_per_clss.items(), key=lambda x:x[1], reverse=True)
-            for accu in accu_per_clss:
-                print('{} ({}): {:.4f}'.format(accu[0][0], accu[1], accu[0][1]))
 
         return grd_accu
 
 
     def grd_eval(self, mode='all'):
 
-        if mode == 'all':
-            print('Evaluating on all object words.')
-        elif mode == 'loc':
-            print('Evaluating only on correctly-predicted object words.')
-        else:
-            raise Exception('Invalid loc mode!')
+        dirpath = os.getcwd()
+        tools = os.path.join(dirpath, 'program/tools/stanford-corenlp-full-2018-02-27')
 
         ref = self.ref
         pred = self.pred
-        print('Number of videos in the reference: {}, number of videos in the submission: {}'.format(len(ref), len(pred)))
 
-        nlp = StanfordCoreNLP('tools/stanford-corenlp-full-2018-02-27')
+        nlp = StanfordCoreNLP(tools)
         props={'annotators': 'lemma','pipelineLanguage':'en', 'outputFormat':'json'}
         vocab_in_split = set()
 
         # precision
         prec = defaultdict(list)
-        for vid, anns in tqdm(ref.items()):
+        for vid, anns in ref.items():
             for seg, ann in anns['segments'].items():
                 if len(ann['frame_ind']) == 0 or vid not in pred or seg not in pred[vid]:
                     continue # do not penalize if sentence not annotated
@@ -212,58 +197,56 @@ class ANetGrdEval(object):
                             recall[class_name].append(0) # object not grounded
 
         num_vocab = len(vocab_in_split)
-        print('Number of groundable objects in this split: {}'.format(num_vocab))
-        print('Number of objects in prec and recall: {}, {}'.format(len(prec), len(recall)))
         prec_accu = np.sum([sum(hm)*1./len(hm) for i,hm in prec.items()])*1./num_vocab
         recall_accu = np.sum([sum(hm)*1./len(hm) for i,hm in recall.items()])*1./num_vocab
         f1 = 2. * prec_accu * recall_accu / (prec_accu + recall_accu)
 
-        print('-' * 80)
-        print('The overall precision_{0} / recall_{0} / F1_{0} are {1:.4f} / {2:.4f} / {3:.4f}'.format(mode, prec_accu, recall_accu, f1))
-        print('-' * 80)
-        if self.verbose:
-            print('Object frequency and grounding accuracy per class (descending by object frequency):')
-            accu_per_clss = {}
-            for i in vocab_in_split:
-                prec_clss = sum(prec[i])*1./len(prec[i]) if i in prec else 0
-                recall_clss = sum(recall[i])*1./len(recall[i]) if i in recall else 0
-                accu_per_clss[(i, prec_clss, recall_clss)] = (len(prec[i]), len(recall[i]))
-            accu_per_clss = sorted(accu_per_clss.items(), key=lambda x:x[1][1], reverse=True)
-            for accu in accu_per_clss:
-                print('{} ({} / {}): {:.4f} / {:.4f}'.format(accu[0][0], accu[1][0], accu[1][1], accu[0][1], accu[0][2]))
-
+        print('precision_{0}: {1:.4f}'.format(mode, prec_accu))
+        print('recall_{0}: {1:.4f}'.format(mode, recall_accu))
+        print('F1_{0}: {1:.4f}'.format(mode, f1))
         return prec_accu, recall_accu, f1
 
 
-def main(args):
+def main():
 
-    grd_evaluator = ANetGrdEval(reference_file=args.reference, submission_file=args.submission,
-                           split_file=args.split_file, val_split=args.split,
-                           iou_thresh=args.iou_thresh, verbose=args.verbose)
-    if args.eval_mode == 'GT':
-        print('Assuming the input boxes are based upon GT sentences.')
-        grd_evaluator.gt_grd_eval()
-    elif args.eval_mode == 'gen':
-        print('Assuming the input boxes are based upon generated sentences.')
-        grd_evaluator.grd_eval(mode=args.loc_mode)
-    else:
-        raise Exception('Invalid eval mode!')
+    input_dir = sys.argv[1]
+    output_dir = sys.argv[2]
+
+    submit_dir = os.path.join(input_dir, 'res')
+    truth_dir = os.path.join(input_dir, 'ref')
+
+    if not os.path.isdir(submit_dir):
+        print("%s doesn't exist" % submit_dir)
+
+    if os.path.isdir(submit_dir) and os.path.isdir(truth_dir):
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+
+    output_filename = os.path.join(output_dir, 'scores.txt')
+    output_file = open(output_filename, 'wb')
+
+    input_filename = os.path.join(submit_dir, 'submission.json')
+    reference_filename = os.path.join(truth_dir, 'ref.json')
+    split_filename = os.path.join(truth_dir, 'split.json')
+    grd_evaluator = ANetGrdEval(reference_file=reference_filename, submission_file=input_filename, split_file=split_filename, val_split=['validation'])
+    with open(input_filename, 'r') as f:
+        label = json.load(f)['label']
+        if label == 'GT':
+            grd_accu = grd_evaluator.gt_grd_eval()
+            output_file.write('localization_accuracy: {:.4f}\n'.format(grd_accu))
+        elif label == 'gen':
+            prec_accu, recall_accu, f1 = grd_evaluator.grd_eval(mode='all')
+            output_file.write('precision_all: {1:.4f}\n'.format(prec_accu))
+            output_file.write('recall_all: {1:.4f}\n'.format(recall_accu))
+            output_file.write('F1_all: {1:.4f}\n'.format(f1))
+            prec_accu, recall_accu, f1 = grd_evaluator.grd_eval(mode='loc')
+            output_file.write('precision_loc: {1:.4f}\n'.format(prec_accu))
+            output_file.write('recall_loc: {1:.4f}\n'.format(recall_accu))
+            output_file.write('F1_loc: {1:.4f}\n'.format(f1))
+        else:
+            raise Exception('Invalid eval mode!')
+        output_file.close()
 
 
 if __name__=='__main__':
-    parser = argparse.ArgumentParser(description='ActivityNet-Entities object grounding evaluation script.')
-    parser.add_argument('-s', '--submission', type=str, default='', help='submission grounding result file')
-    parser.add_argument('-r', '--reference', type=str, default='data/anet_entities_cleaned_class_thresh50_trainval.json', help='reference file')
-    parser.add_argument('--split_file', type=str, default='data/split_ids_anet_entities.json', help='path to the split file')
-    parser.add_argument('--split', type=str, nargs='+', default=['validation'], help='which split(s) to evaluate')
-
-    parser.add_argument('--eval_mode', type=str, default='GT',
-        help='GT | gen, indicating whether the input is on GT sentences or generated sentences')
-    parser.add_argument('--loc_mode', type=str, default='all',
-        help='all | loc, when the input is on generate sentences, whether consider language error or not')
-
-    parser.add_argument('--iou_thresh', type=float, default=0.5, help='the iou threshold for grounding correctness')
-    parser.add_argument('-v', '--verbose', action='store_true')
-    args = parser.parse_args()
-
-    main(args)
+    main()
