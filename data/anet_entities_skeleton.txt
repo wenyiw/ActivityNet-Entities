@@ -30,6 +30,8 @@ Format of JSON ActivityNet-Entities annotation files
         -> process_idx: the index of the object class in the sentence
         -> process_bnd_box: coordinate of all the bounding boxes
         -> crowds: whether the box represents a group of objects
+        
+Submissions need to be named submission_gt for ground truth mode and submission_gen for generated sentences mode.
 
 ### an example on grounding evaluation subsmission files
 ```
