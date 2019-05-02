@@ -22,6 +22,8 @@ from utils import bbox_overlaps_batch, get_frm_mask
 
 from stanfordcorenlp import StanfordCoreNLP
 
+import logging
+
 class ANetGrdEval(object):
 
     def __init__(self, reference_file=None, submission_file=None,
@@ -100,20 +102,26 @@ class ANetGrdEval(object):
 
         grd_accu = np.mean([sum(hm)*1./len(hm) for i,hm in results.items()])
 
+        print('localization_accuracy: {:.4f}\n'.format(grd_accu))
+
         return grd_accu
 
 
     def grd_eval(self, mode='all'):
 
         dirpath = os.getcwd()
-        tools = os.path.join(dirpath, 'program/tools/stanford-corenlp-full-2018-02-27')
+        tools = os.path.join(dirpath, 'program/stanford-corenlp-full-2018-02-27')
 
         ref = self.ref
         pred = self.pred
 
+        print('before stanfordnlp')
+
         nlp = StanfordCoreNLP(tools)
         props={'annotators': 'lemma','pipelineLanguage':'en', 'outputFormat':'json'}
         vocab_in_split = set()
+
+        print('here')
 
         # precision
         prec = defaultdict(list)
@@ -196,6 +204,8 @@ class ANetGrdEval(object):
                         if mode == 'all':
                             recall[class_name].append(0) # object not grounded
 
+        print('3')
+
         num_vocab = len(vocab_in_split)
         prec_accu = np.sum([sum(hm)*1./len(hm) for i,hm in prec.items()])*1./num_vocab
         recall_accu = np.sum([sum(hm)*1./len(hm) for i,hm in recall.items()])*1./num_vocab
@@ -213,6 +223,17 @@ def main():
     output_dir = sys.argv[2]
 
     submit_dir = os.path.join(input_dir, 'res')
+    files = os.listdir(submit_dir)
+    gen = ''
+    gt = ''
+    for f in files:
+        if 'gen' in f:
+            gen = os.path.join(submit_dir, f)
+        if 'gt' in f:
+            gt = os.path.join(submit_dir, f)
+
+    print(gen, gt)
+
     truth_dir = os.path.join(input_dir, 'ref')
 
     if not os.path.isdir(submit_dir):
@@ -225,28 +246,43 @@ def main():
     output_filename = os.path.join(output_dir, 'scores.txt')
     output_file = open(output_filename, 'wb')
 
-    input_filename = os.path.join(submit_dir, 'submission.json')
     reference_filename = os.path.join(truth_dir, 'ref.json')
     split_filename = os.path.join(truth_dir, 'split.json')
-    grd_evaluator = ANetGrdEval(reference_file=reference_filename, submission_file=input_filename, split_file=split_filename, val_split=['validation'])
-    with open(input_filename, 'r') as f:
-        label = json.load(f)['label']
-        if label == 'GT':
+
+    if gt != '':
+        print('gt')
+        input_filename = gt
+        grd_evaluator = ANetGrdEval(reference_file=reference_filename, submission_file=input_filename, split_file=split_filename, val_split=['validation'])
+        with open(input_filename, 'r') as f:
             grd_accu = grd_evaluator.gt_grd_eval()
             output_file.write('localization_accuracy: {:.4f}\n'.format(grd_accu))
-        elif label == 'gen':
+    else:
+        print('no gt')
+        output_file.write('localization_accuracy: 0\n')
+    if gen != '':
+        print('gen')
+        input_filename = gen
+        grd_evaluator = ANetGrdEval(reference_file=reference_filename, submission_file=input_filename, split_file=split_filename, val_split=['validation'])
+        with open(input_filename, 'r') as f:
             prec_accu, recall_accu, f1 = grd_evaluator.grd_eval(mode='all')
-            output_file.write('precision_all: {1:.4f}\n'.format(prec_accu))
-            output_file.write('recall_all: {1:.4f}\n'.format(recall_accu))
-            output_file.write('F1_all: {1:.4f}\n'.format(f1))
+            output_file.write('precision_all: {0:.4f}\n'.format(prec_accu))
+            output_file.write('recall_all: {0:.4f}\n'.format(recall_accu))
+            output_file.write('F1_all: {0:.4f}\n'.format(f1))
             prec_accu, recall_accu, f1 = grd_evaluator.grd_eval(mode='loc')
-            output_file.write('precision_loc: {1:.4f}\n'.format(prec_accu))
-            output_file.write('recall_loc: {1:.4f}\n'.format(recall_accu))
-            output_file.write('F1_loc: {1:.4f}\n'.format(f1))
-        else:
-            raise Exception('Invalid eval mode!')
-        output_file.close()
+            output_file.write('precision_loc: {0:.4f}\n'.format(prec_accu))
+            output_file.write('recall_loc: {0:.4f}\n'.format(recall_accu))
+            output_file.write('F1_loc: {0:.4f}\n'.format(f1))
+    else:
+        print('no gen')
+        output_file.write('precision_all: 0\n')
+        output_file.write('recall_all: 0\n')
+        output_file.write('F1_all: 0\n')
+        output_file.write('precision_loc: 0\n')
+        output_file.write('recall_loc: 0\n')
+        output_file.write('F1_loc: 0\n')
+    output_file.close()
 
 
 if __name__=='__main__':
     main()
+
